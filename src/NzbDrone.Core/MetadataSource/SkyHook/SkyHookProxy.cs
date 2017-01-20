@@ -13,6 +13,7 @@ using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Tv;
 using Newtonsoft.Json;
 using System.Text.RegularExpressions;
+using System.Text;
 
 namespace NzbDrone.Core.MetadataSource.SkyHook
 {
@@ -72,7 +73,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                .SetSegment("route", "movie")
                .SetSegment("id", TmdbId.ToString())
                .SetSegment("secondaryRoute", "")
-               .AddQueryParam("append_to_response", "alternative_titles,release_dates")
+               .AddQueryParam("append_to_response", "alternative_titles,release_dates,videos")
                .AddQueryParam("country", "US")
                .Build();
 
@@ -88,8 +89,9 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             movie.TmdbId = TmdbId;
             movie.ImdbId = resource.imdb_id;
             movie.Title = resource.title;
-            movie.TitleSlug = movie.Title.ToLower().Replace(" ", "-");
-            movie.CleanTitle = Parser.Parser.CleanSeriesTitle(movie.Title);
+            movie.TitleSlug = ToUrlSlug(resource.title);
+            movie.CleanTitle = Parser.Parser.CleanSeriesTitle(resource.title);
+            movie.SortTitle = Parser.Parser.NormalizeTitle(resource.title);
             movie.Overview = resource.overview;
             movie.Website = resource.homepage;
             if (resource.release_date.IsNotNullOrWhiteSpace())
@@ -98,11 +100,6 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                 movie.Year = movie.InCinemas.Value.Year;
             }
 
-            var slugResult = _movieService.FindByTitleSlug(movie.TitleSlug);
-            if (slugResult != null)
-            {
-                _logger.Debug("Movie with this title slug already exists. Adding year...");
-            }
             movie.TitleSlug += "-" + movie.Year.ToString();
 
             movie.Images.Add(_configService.GetCoverForURL(resource.poster_path, MediaCoverTypes.Poster));//TODO: Update to load image specs from tmdb page!
@@ -152,6 +149,29 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             {
                 movie.Status = MovieStatusType.Announced;
             }
+            
+            if (resource.videos != null)
+            {
+                foreach (Video video in resource.videos.results)
+                {
+                    if (video.type == "Trailer" && video.site == "YouTube")
+                    {
+                        if (video.key != null)
+                        {
+                            movie.YouTubeTrailerId = video.key;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (resource.production_companies != null)
+            {
+                if (resource.production_companies.Any())
+                {
+                    movie.Studio = resource.production_companies[0].name;
+                }
+            }
 
             return movie;
         }
@@ -189,6 +209,8 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
         {
             var lowerTitle = title.ToLower();
 
+            lowerTitle = lowerTitle.Replace(".", "");
+
             var parserResult = Parser.Parser.ParseMovieTitle(title, true);
 
             var yearTerm = "";
@@ -196,7 +218,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             if (parserResult != null && parserResult.MovieTitle != title)
             {
                 //Parser found something interesting!
-                lowerTitle = parserResult.MovieTitle.ToLower();
+                lowerTitle = parserResult.MovieTitle.ToLower().Replace(".", " "); //TODO Update so not every period gets replaced (e.g. R.I.P.D.)
                 if (parserResult.Year > 1800)
                 {
                     yearTerm = parserResult.Year.ToString();
@@ -329,28 +351,19 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             {
                 imdbMovie.SortTitle = Parser.Parser.NormalizeTitle(result.title);
                 imdbMovie.Title = result.title;
-                string titleSlug = result.title;
-                imdbMovie.TitleSlug = titleSlug.ToLower().Replace(" ", "-");
+                imdbMovie.TitleSlug = ToUrlSlug(result.title);
 
                 if (result.release_date.IsNotNullOrWhiteSpace())
                 {
                     imdbMovie.Year = DateTime.Parse(result.release_date).Year;
                 }
 
-
-
-                var slugResult = _movieService.FindByTitleSlug(imdbMovie.TitleSlug);
-                if (slugResult != null)
-                {
-                    _logger.Debug("Movie with this title slug already exists. Adding year...");
-                }
-                imdbMovie.TitleSlug += "-" + imdbMovie.Year.ToString();
+                imdbMovie.TitleSlug += "-" + imdbMovie.Year;
 
                 imdbMovie.Images = new List<MediaCover.MediaCover>();
                 imdbMovie.Overview = result.overview;
                 try
                 {
-                    string url = result.poster_path;
                     var imdbPoster = _configService.GetCoverForURL(result.poster_path, MediaCoverTypes.Poster);
                     imdbMovie.Images.Add(imdbPoster);
                 }
@@ -523,6 +536,30 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                 default:
                     return MediaCoverTypes.Unknown;
             }
+        }
+
+        public static string ToUrlSlug(string value)
+        {
+            //First to lower case
+            value = value.ToLowerInvariant();
+
+            //Remove all accents
+            var bytes = Encoding.GetEncoding("Cyrillic").GetBytes(value);
+            value = Encoding.ASCII.GetString(bytes);
+
+            //Replace spaces
+            value = Regex.Replace(value, @"\s", "-", RegexOptions.Compiled);
+
+            //Remove invalid chars
+            value = Regex.Replace(value, @"[^a-z0-9\s-_]", "", RegexOptions.Compiled);
+
+            //Trim dashes from end
+            value = value.Trim('-', '_');
+
+            //Replace double occurences of - or _
+            value = Regex.Replace(value, @"([-_]){2,}", "$1", RegexOptions.Compiled);
+
+            return value;
         }
     }
 }

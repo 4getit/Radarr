@@ -26,6 +26,7 @@ namespace NzbDrone.Core.MediaFiles
         List<string> FilterExistingFiles(List<string> files, Series series);
         List<string> FilterExistingFiles(List<string> files, Movie movie);
         EpisodeFile Get(int id);
+        MovieFile GetMovie(int id);
         List<EpisodeFile> Get(IEnumerable<int> ids);
         List<MovieFile> GetMovies(IEnumerable<int> ids);
 
@@ -110,11 +111,11 @@ namespace NzbDrone.Core.MediaFiles
 
         public List<string> FilterExistingFiles(List<string> files, Movie movie)
         {
-            var seriesFiles = GetFilesBySeries(movie.Id).Select(f => Path.Combine(movie.Path, f.RelativePath)).ToList();
+            var movieFiles = GetFilesByMovie(movie.Id).Select(f => Path.Combine(movie.Path, f.RelativePath)).ToList();
 
-            if (!seriesFiles.Any()) return files;
+            if (!movieFiles.Any()) return files;
 
-            return files.Except(seriesFiles, PathEqualityComparer.Instance).ToList();
+            return files.Except(movieFiles, PathEqualityComparer.Instance).ToList();
         }
 
         public EpisodeFile Get(int id)
@@ -150,5 +151,9 @@ namespace NzbDrone.Core.MediaFiles
             _movieFileRepository.Update(episodeFile);
         }
 
+        public MovieFile GetMovie(int id)
+        {
+            return _movieFileRepository.Get(id);
+        }
     }
 }
